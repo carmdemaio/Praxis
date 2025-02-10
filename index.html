@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Praxis Risk Calculator</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            flex-direction: column;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+            width: 400px;
+            text-align: center;
+        }
+        input, button {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+        button {
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .results {
+            margin-top: 20px;
+            padding: 10px;
+            background: #eef;
+            border-radius: 5px;
+            text-align: left;
+        }
+        canvas {
+            margin-top: 20px;
+            max-width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>Praxis Risk Calculator</h2>
+        <form id="riskForm">
+            <label>Initial Investment ($):</label>
+            <input type="number" id="initialInvestment" required>
+
+            <label>Expected Return (%):</label>
+            <input type="number" id="expectedReturn" step="0.01" required>
+
+            <label>Volatility (%):</label>
+            <input type="number" id="volatility" step="0.01" required>
+
+            <label>Time Horizon (years):</label>
+            <input type="number" id="timeHorizon" required>
+
+            <button type="submit">Calculate Risk</button>
+        </form>
+
+        <div class="results" id="results" style="display: none;">
+            <h3>Risk Analysis</h3>
+            <p><strong>Mean Final Value:</strong> <span id="meanValue"></span></p>
+            <p><strong>Median Final Value:</strong> <span id="medianValue"></span></p>
+            <p><strong>5th Percentile (Worst Case):</strong> <span id="worstCase"></span></p>
+            <p><strong>95th Percentile (Best Case):</strong> <span id="bestCase"></span></p>
+            <p><strong>Standard Deviation:</strong> <span id="stdDeviation"></span></p>
+        </div>
+
+        <canvas id="stdDevChart"></canvas>
+    </div>
+
+    <script>
+
+   document.getElementById("riskForm").addEventListener("submit", async function(event) {
+    event.preventDefault(); // Prevent form from resetting
+
+    // Get input values
+    let initialInvestment = parseFloat(document.getElementById("initialInvestment").value);
+    let expectedReturn = parseFloat(document.getElementById("expectedReturn").value) / 100;
+    let volatility = parseFloat(document.getElementById("volatility").value) / 100;
+    let timeHorizon = parseInt(document.getElementById("timeHorizon").value);
+
+    if (isNaN(initialInvestment) || isNaN(expectedReturn) || isNaN(volatility) || isNaN(timeHorizon)) {
+        alert("Please enter valid numbers in all fields.");
+        return;
+    }
+
+    let data = {
+        initial_investment: initialInvestment,
+        expected_return: expectedReturn,
+        volatility: volatility,
+        time_horizon: timeHorizon
+    };
+
+    try {
+        let response = await fetch("http://127.0.0.1:8000/calculate_risk/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data)
+        });
+
+        if (!response.ok) {
+            throw new Error("Failed to fetch data from the server.");
+        }
+
+        let result = await response.json();
+
+        // Update displayed results
+        document.getElementById("meanValue").textContent = `$${result.risk_metrics["Mean Final Value"].toFixed(2)}`;
+        document.getElementById("medianValue").textContent = `$${result.risk_metrics["Median Final Value"].toFixed(2)}`;
+        document.getElementById("worstCase").textContent = `$${result.risk_metrics["5th Percentile (Worst Case)"].toFixed(2)}`;
+        document.getElementById("bestCase").textContent = `$${result.risk_metrics["95th Percentile (Best Case)"].toFixed(2)}`;
+        document.getElementById("stdDeviation").textContent = `$${result.risk_metrics["Standard Deviation"].toFixed(2)}`;
+        document.getElementById("results").style.display = "block";
+
+        // Restore input values to prevent them from clearing
+        document.getElementById("initialInvestment").value = initialInvestment;
+        document.getElementById("expectedReturn").value = (expectedReturn * 100).toFixed(2);
+        document.getElementById("volatility").value = (volatility * 100).toFixed(2);
+        document.getElementById("timeHorizon").value = timeHorizon;
+
+        let mean = result.risk_metrics["Mean Final Value"];
+        let stdDev = result.risk_metrics["Standard Deviation"];
+
+        // Generate normal distribution based on API response
+        let numSamples = 10000;
+        let simulatedReturns = [];
+        for (let i = 0; i < numSamples; i++) {
+            let value = mean + stdDev * (Math.sqrt(-2 * Math.log(Math.random())) * Math.cos(2 * Math.PI * Math.random()));
+            simulatedReturns.push(value);
+        }
+
+        // Bin the values into a histogram
+        let bins = 50;
+        let min = Math.min(...simulatedReturns);
+        let max = Math.max(...simulatedReturns);
+        let binWidth = (max - min) / bins;
+        let histogram = new Array(bins).fill(0);
+
+        simulatedReturns.forEach(value => {
+            let binIndex = Math.floor((value - min) / binWidth);
+            if (binIndex >= bins) binIndex = bins - 1;
+            histogram[binIndex]++;
+        });
+
+        let binLabels = [];
+        for (let i = 0; i < bins; i++) {
+            binLabels.push((min + i * binWidth).toFixed(2));
+        }
+
+        let ctx = document.getElementById("stdDevChart").getContext("2d");
+        if (window.myChart instanceof Chart) {
+            window.myChart.destroy();
+        }
+
+        window.myChart = new Chart(ctx, {
+            type: "bar",
+            data: {
+                labels: binLabels.map(x => parseFloat(x)), // Convert labels to numbers for accuracy
+                datasets: [{
+                    label: "Simulated Returns Distribution",
+                    data: histogram,
+                    backgroundColor: "rgba(54, 162, 235, 0.5)",
+                    borderColor: "rgba(54, 162, 235, 1)",
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: { 
+                        title: { display: true, text: "Return" }, 
+                        type: "linear"  // Ensures the X-axis is numeric
+                    },
+                    y: { title: { display: true, text: "Frequency" } }
+                },
+                plugins: {
+                    annotation: {
+                        annotations: {
+                            meanLine: {
+                                type: 'line',
+                                xMin: mean,
+                                xMax: mean,
+                                borderColor: 'red',
+                                borderWidth: 2,
+                                xScaleID: 'x',
+                                label: { content: "Mean", enabled: true, position: "top" }
+                            },
+                            stdDev1Low: {
+                                type: 'line',
+                                xMin: mean - stdDev,
+                                xMax: mean - stdDev,
+                                borderColor: 'green',
+                                borderWidth: 2,
+                                xScaleID: 'x',
+                                label: { content: "-1 Std Dev", enabled: true, position: "top" }
+                            },
+                            stdDev1High: {
+                                type: 'line',
+                                xMin: mean + stdDev,
+                                xMax: mean + stdDev,
+                                borderColor: 'green',
+                                borderWidth: 2,
+                                xScaleID: 'x',
+                                label: { content: "+1 Std Dev", enabled: true, position: "top" }
+                            },
+                            stdDev2Low: {
+                                type: 'line',
+                                xMin: mean - 2 * stdDev,
+                                xMax: mean - 2 * stdDev,
+                                borderColor: 'orange',
+                                borderWidth: 2,
+                                xScaleID: 'x',
+                                label: { content: "-2 Std Dev", enabled: true, position: "top" }
+                            },
+                            stdDev2High: {
+                                type: 'line',
+                                xMin: mean + 2 * stdDev,
+                                xMax: mean + 2 * stdDev,
+                                borderColor: 'orange',
+                                borderWidth: 2,
+                                xScaleID: 'x',
+                                label: { content: "+2 Std Dev", enabled: true, position: "top" }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("Error:", error);
+        alert("An error occurred while fetching the risk calculation. Please check the server and try again.");
+    }
+});
+
+
+
+    </script>
+</body>
+</html>
