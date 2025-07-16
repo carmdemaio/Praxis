@@ -1,48 +1,18 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import numpy as np
 import pandas as pd
 
-# Initialize FastAPI app
 app = FastAPI()
 
-# Enable CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins (for testing)
+    allow_origins=["http://127.0.0.1:5500", "http://localhost:5500"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],  # Explicitly allow OPTIONS
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"]
 )
-
-class RiskEngine:
-    def __init__(self, simulations=10000):
-        self.simulations = simulations
-
-    def monte_carlo_simulation(self, initial_investment, expected_return, volatility, time_horizon):
-        np.random.seed(42) 
-        results = []
-
-        for _ in range(self.simulations):
-            price = initial_investment
-            for _ in range(time_horizon):
-                annual_return = np.random.normal(expected_return, volatility)
-                price *= (1 + annual_return)
-            results.append(price)
-
-        return pd.DataFrame(results, columns=["Final Value"])
-
-    def risk_analysis(self, df):
-        return {
-            "Mean Final Value": df["Final Value"].mean(),
-            "Median Final Value": df["Final Value"].median(),
-            "5th Percentile (Worst Case)": np.percentile(df["Final Value"], 5),
-            "95th Percentile (Best Case)": np.percentile(df["Final Value"], 95),
-            "Standard Deviation": df["Final Value"].std()
-        }
-
-risk_engine = RiskEngine()
 
 class RiskInput(BaseModel):
     initial_investment: float
@@ -50,27 +20,39 @@ class RiskInput(BaseModel):
     volatility: float
     time_horizon: int
 
-@app.options("/calculate_risk/")
-async def preflight():
-    return {"message": "CORS preflight successful"}
-
 @app.post("/calculate_risk/")
 def calculate_risk(data: RiskInput):
-    simulation_results = risk_engine.monte_carlo_simulation(
-        initial_investment=data.initial_investment,
-        expected_return=data.expected_return,
-        volatility=data.volatility,
-        time_horizon=data.time_horizon
-    )
-    
-    risk_metrics = risk_engine.risk_analysis(simulation_results)
-    
+    num_simulations = 10000
+    results = []
+
+    for _ in range(num_simulations):
+        final_value = data.initial_investment
+        for _ in range(data.time_horizon):
+            annual_return = np.random.normal(data.expected_return, data.volatility)
+            final_value *= (1 + annual_return)
+        results.append(final_value)
+
+    mean_value = float(np.mean(results))
+    median_value = float(np.median(results))
+    std_deviation = float(np.std(results))
+    percentile_5 = float(np.percentile(results, 5))
+    percentile_95 = float(np.percentile(results, 95))
+
     return {
-        "simulation_results": simulation_results.head(10).to_dict(orient="records"),
-        "risk_metrics": risk_metrics
+        "risk_metrics": {
+            "Mean Final Value": mean_value,
+            "Median Final Value": median_value,
+            "Standard Deviation": std_deviation,
+            "5th Percentile (Worst Case)": percentile_5,
+            "95th Percentile (Best Case)": percentile_95,
+        }
     }
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
-
+@app.post("/upload_csv/")
+async def upload_csv(file: UploadFile = File(...)):
+    df = pd.read_csv(file.file)
+    if "return" not in df.columns:
+        return {"error": "CSV must contain a 'return' column."}
+    daily_returns = df["return"].pct_change().dropna()
+    calculated_volatility = float(np.std(daily_returns))
+    return {"calculated_volatility": calculated_volatility}
